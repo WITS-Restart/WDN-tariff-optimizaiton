@@ -48,18 +48,15 @@ class WaterNetworkEnv(gym.Env):
         not_satisfied_water_after = sum(sum(self.bdemands - self.demandv))
 
         dv = self.demandv[i]
-        #print(dv, self.tariffs)
 
         paid_price = sum(dv * self.tariffs)
 
-        #!VD! prima era così cost = paid_price + 10 * (not_satisfied_water_after - not_satisfied_water_before)
         cost = 100 * paid_price + 1000 * (not_satisfied_water_after - not_satisfied_water_before)
 
         return self.state, cost
     
 def gaussian_pattern(peak_hour, total_consumption, std_dev=3, norm="sum"):
-    # if norm = "sum", the total consumption equals total_consumption
-    # if norm = "max", the peak consumption will be equal to total_consumption
+
     hours = np.arange(24)
     distance = np.minimum(np.abs(hours - peak_hour), 24 - np.abs(hours - peak_hour))
     gaussian = np.exp(-0.5 * (distance / std_dev) ** 2)

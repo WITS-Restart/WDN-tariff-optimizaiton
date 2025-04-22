@@ -6,22 +6,12 @@ from collections import deque
 import random
 
 
-#!VD! qua è stato tolto class AttentionModel(nn.Module) e forward(...)
-
 class SimpleModel(nn.Module):
     def __init__(self, num_users, num_patterns):
         super(SimpleModel, self).__init__()
 
 
-        #new agent 2
         self.emb_id = nn.Embedding(num_users + 1, 16)  # add 1 to handle the next_id of the last id
-        #self.mlp_id = nn.Sequential(
-        #    nn.Linear(1, 32),
-        #    nn.ReLU(),
-        #    nn.Linear(32, 32),
-        #    nn.ReLU(),
-        #    nn.Linear(32, 16)
-        #)
 
         self.mlp_pressures = nn.Sequential(
             nn.Linear(24 * num_users, 256),
@@ -42,25 +32,12 @@ class SimpleModel(nn.Module):
         )
     
     def forward(self, user_id, pressures, tariffs):
-        #new agent 2
+
         user_id_feat = self.emb_id(user_id)
-        #user_id = user_id.unsqueeze(1).float()
-        #user_id_feat = self.mlp_id(user_id)
+        pressures_norm = (pressures - 0) / (90 - 0)
+        pressures_feat = self.mlp_pressures(pressures_norm)
 
-        #!VD! qua prima veniva fatto pressures = pressures.reshape(1, -1)
-        #!VD!2# Normalizzazione Min-Max delle pressioni con range [0, 1]
-        pressures_norm = (pressures - 0) / (90 - 0)  # Min = 0, Max = 45 (trovati su questa rete!!!)
-        pressures_feat = self.mlp_pressures(pressures_norm)  #(pressures)
-
-        # !VD!2!
         combined_input = torch.cat([user_id_feat, pressures_feat, tariffs], dim=1)
-        #print("User ID features:", user_id_feat)
-        #print("Pressures features:", pressures_feat)
-        #print("Tariffs:", tariffs)
-        #print("Final input shape:", combined_input.shape)
-        #print("User ID features after MLP:", user_id_feat)
-        #print(f"User ID range: min={user_id.min().item()}, max={user_id.max().item()}")
-        #print(f"Tariffs range: min={tariffs.min().item()}, max={tariffs.max().item()}")
 
         output = self.mlp(torch.cat([user_id_feat, pressures_feat, tariffs], dim=1))
 
@@ -68,7 +45,7 @@ class SimpleModel(nn.Module):
 
 
 class DQNAgent:
-    def __init__(self, num_clients, num_patterns, learning_rate=0.001, device=torch.device("cpu")):  # !VD! nuovo device
+    def __init__(self, num_clients, num_patterns, learning_rate=0.001, device=torch.device("cpu")):
         self.num_patterns = num_patterns
         self.clients = [i for i in range(num_clients)]
         self.memory = deque(maxlen=2000)
@@ -79,10 +56,9 @@ class DQNAgent:
         self.learning_rate = learning_rate
         self.device = device
 
-        # !VD5#
         self.model = SimpleModel(num_clients, num_patterns).to(self.device)
         self.target_model = SimpleModel(num_clients, num_patterns).to(self.device)
-        self.update_target_network()  # Inizializza la target network con gli stessi pesi
+        self.update_target_network()
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         self.loss = nn.MSELoss()
@@ -94,7 +70,7 @@ class DQNAgent:
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
-    #!VD! qualche cambiamento anche qua in questa def
+
     def predict_action(self, id, state, tariffs):
         if np.random.rand() <= self.epsilon:
             # Esplora: scegli un'azione casuale
@@ -104,20 +80,13 @@ class DQNAgent:
             q_values = self.model(id, torch.FloatTensor(state).to(self.device), tariffs.reshape(-1, 24)).cpu().detach().numpy()
             return np.argmax(q_values)
 
-        #return action if action != 2 else 3 #cambiare se cambiano i pattern
+
 
     def remember(self, id, state, tariffs, action, reward, next_id, next_state, done):
         self.memory.append((id, state, tariffs, action, reward, next_id, next_state, done))
 
 
-    #!VD! cambiamento anche qua in questa def
-    #!VD! qua avevo messo prima la patch:
-        # print(action, target, target_f.shape)
-        # da controllare xke va fuori il limite!!!
-        #if action >= target_f.shape[1]:
-            #print(f"Warning: action {action} is out of bounds (max index {target_f.shape[1] - 1}). Clamping to valid range.")
-            #action = target_f.shape[1] - 1
-        #target_f[0][action] = target
+
     def replay(self, batch_size):
         if len(self.memory) < batch_size:
             return
@@ -135,8 +104,6 @@ class DQNAgent:
         
         q_values = self.model(ids, states, tariffs).gather(1, actions).squeeze(1)
         
-        #next_q_values = self.model(next_ids, next_states, tariffs).detach().max(1)[0]
-        #!VD5#
         next_q_values = self.target_model(next_ids, next_states, tariffs).detach().max(1)[0]
 
         targets = rewards + self.gamma * next_q_values * (1 - dones)
@@ -146,7 +113,7 @@ class DQNAgent:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        #!VD5!
+
         self.train_step += 1
         if self.train_step % self.target_update_freq == 0:
             self.update_target_network()
@@ -154,13 +121,6 @@ class DQNAgent:
     def train(self, env, num_clients, batch_size):
         state = env.reset()
         total_cost = 0
-
-        # qui posso eseguire epanet con tutti i pattern generati dal modello
-        # e poi calcolare il costo come prezzo pagato da ogni cliente + una penalità
-        # dipendente da quanta acqua non è stata soddisfatta (base demand - demand value)
-
-        # Problema: mi serve uno stato rappresentativo della situazione
-        # altrimenti il modello non impara
 
         for client_idx in range(num_clients):
             action = self.predict_action(torch.tensor([client_idx]).to(self.device), state.reshape(1, -1), torch.FloatTensor(env.tariffs).to(self.device))
@@ -170,30 +130,20 @@ class DQNAgent:
 
             reward = -cost
 
-            next_id = client_idx + 1 # cambiare se si cambia la modalità di estrazione dei clienti #!VD! vedere
+            next_id = client_idx + 1
 
             self.remember(client_idx, state, env.tariffs, action, reward, next_id, next_state, done=(client_idx == num_clients - 1))
 
             state = next_state
 
-        # problema: non esiste uno stato
-        # possibili features potrebbero essere:
-        # numero di nodi tra me e il reservoir più vicino
-        # pressione al nodo ----> che però è influenzata dall'assorbimento degli altri nodi
-        # 
-        # inoltre il sistema non sarebbe comunque adattabile perchè il training dovrebbe ricominciare da capo
-        # ad esempio se si aggiunge o rimuove un cliente o un pattern
-
-            #!VD5#
             self.replay(batch_size)
-        #self.replay(batch_size)
 
         self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
 
         return total_cost
     
     def eval(self, env, num_clients):
-        # TODO: verificare che funzioni correttamente
+
         state = env.reset()
         total_cost = 0
 
